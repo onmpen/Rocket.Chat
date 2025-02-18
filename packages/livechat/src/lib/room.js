@@ -3,7 +3,9 @@ import { route } from 'preact-router';
 
 import { Livechat } from '../api';
 import { CallStatus, isCallOngoing } from '../components/Calls/CallStatus';
-import { setCookies, upsert, canRenderMessage } from '../components/helpers';
+import { canRenderMessage } from '../helpers/canRenderMessage';
+import { setCookies } from '../helpers/cookies';
+import { upsert } from '../helpers/upsert';
 import { store, initialState } from '../store';
 import { normalizeAgent } from './api';
 import Commands from './commands';
@@ -13,6 +15,7 @@ import { parentCall } from './parentCall';
 import { createToken } from './random';
 import { normalizeMessage, normalizeMessages } from './threads';
 import { handleTranscript } from './transcript';
+import Triggers from './triggers';
 
 const commands = new Commands();
 
@@ -21,13 +24,19 @@ export const closeChat = async ({ transcriptRequested } = {}) => {
 		await handleTranscript();
 	}
 
-	const { config: { settings: { clearLocalStorageWhenChatEnded } = {} } = {} } = store.state;
+	const { department, config: { settings: { clearLocalStorageWhenChatEnded } = {} } = {} } = store.state;
+
+	await store.setState({ room: null, renderedTriggers: [] });
 
 	if (clearLocalStorageWhenChatEnded) {
 		// exclude UI-affecting flags
-		const { minimized, visible, undocked, expanded, businessUnit, ...initial } = initialState();
+		const { iframe: currentIframe } = store.state;
+		const { minimized, visible, undocked, expanded, businessUnit, config, iframe, ...initial } = initialState();
+		initial.iframe = { ...currentIframe, guest: { department } };
 		await store.setState(initial);
 	}
+
+	await Triggers.processTrigger('after-guest-registration');
 
 	await loadConfig();
 	parentCall('callback', 'chat-ended');
@@ -35,7 +44,9 @@ export const closeChat = async ({ transcriptRequested } = {}) => {
 };
 
 const getVideoConfMessageData = (message) =>
-	message.blocks?.find(({ appId }) => appId === 'videoconf-core')?.elements?.find(({ actionId }) => actionId === 'joinLivechat');
+	message.blocks
+		?.find(({ appId, type }) => appId === 'videoconf-core' && type === 'actions')
+		?.elements?.find(({ actionId }) => actionId === 'joinLivechat');
 
 const isVideoCallMessage = (message) => {
 	if (message.t === constants.webRTCCallStartedMessageType) {
@@ -92,7 +103,7 @@ export const processIncomingCallMessage = async (message) => {
 
 const processMessage = async (message) => {
 	if (message.t === 'livechat-close') {
-		closeChat(message);
+		await closeChat(message);
 	} else if (message.t === 'command') {
 		commands[message.msg] && commands[message.msg]();
 	} else if (message.webRtcCallEndTs) {
@@ -112,6 +123,22 @@ const doPlaySound = async (message) => {
 	await store.setState({ sound: { ...sound, play: true } });
 };
 
+export const onAgentChange = async (agent) => {
+	await store.setState({ agent, queueInfo: null });
+	parentCall('callback', ['assign-agent', normalizeAgent(agent)]);
+};
+
+export const onAgentStatusChange = (status) => {
+	const { agent } = store.state;
+	agent && store.setState({ agent: { ...agent, status } });
+	parentCall('callback', ['agent-status-change', normalizeAgent(agent)]);
+};
+
+export const onQueuePositionChange = async (queueInfo) => {
+	await store.setState({ queueInfo });
+	parentCall('callback', ['queue-position-change', queueInfo]);
+};
+
 export const initRoom = async () => {
 	const { state } = store;
 	const { room } = state;
@@ -120,44 +147,25 @@ export const initRoom = async () => {
 		return;
 	}
 
-	Livechat.unsubscribeAll();
-
 	const {
 		token,
 		agent,
 		queueInfo,
 		room: { _id: rid, servedBy },
 	} = state;
-	Livechat.subscribeRoom(rid);
 
 	let roomAgent = agent;
 	if (!roomAgent) {
 		if (servedBy) {
-			roomAgent = await Livechat.agent({ rid });
+			roomAgent = await Livechat.agent(rid);
 			await store.setState({ agent: roomAgent, queueInfo: null });
-			parentCall('callback', ['assign-agent', normalizeAgent(roomAgent)]);
+			parentCall('callback', 'assign-agent', normalizeAgent(roomAgent));
 		}
 	}
 
 	if (queueInfo) {
-		parentCall('callback', ['queue-position-change', queueInfo]);
+		parentCall('callback', 'queue-position-change', queueInfo);
 	}
-
-	Livechat.onAgentChange(rid, async (agent) => {
-		await store.setState({ agent, queueInfo: null });
-		parentCall('callback', ['assign-agent', normalizeAgent(agent)]);
-	});
-
-	Livechat.onAgentStatusChange(rid, (status) => {
-		const { agent } = store.state;
-		agent && store.setState({ agent: { ...agent, status } });
-		parentCall('callback', ['agent-status-change', normalizeAgent(agent)]);
-	});
-
-	Livechat.onQueuePositionChange(rid, async (queueInfo) => {
-		await store.setState({ queueInfo });
-		parentCall('callback', ['queue-position-change', queueInfo]);
-	});
 
 	setCookies(rid, token);
 };
@@ -177,7 +185,8 @@ const transformAgentInformationOnMessage = (message) => {
 	return message;
 };
 
-Livechat.onTyping((username, isTyping) => {
+export const onUserActivity = (username, activities) => {
+	const isTyping = activities.includes('user-typing');
 	const { typing, user, agent } = store.state;
 
 	if (user && user.username && user.username === username) {
@@ -196,11 +205,15 @@ Livechat.onTyping((username, isTyping) => {
 	if (!isTyping) {
 		return store.setState({ typing: typing.filter((u) => u !== username) });
 	}
-});
+};
 
-Livechat.onMessage(async (message) => {
+export const onMessage = async (originalMessage) => {
+	let message = JSON.parse(JSON.stringify(originalMessage));
+
 	if (message.ts instanceof Date) {
 		message.ts = message.ts.toISOString();
+	} else {
+		message.ts = message.ts.$date ? new Date(message.ts.$date).toISOString() : new Date(message.ts).toISOString();
 	}
 
 	message = await normalizeMessage(message);
@@ -211,7 +224,12 @@ Livechat.onMessage(async (message) => {
 	message = transformAgentInformationOnMessage(message);
 
 	await store.setState({
-		messages: upsert(store.state.messages, message, ({ _id }) => _id === message._id, ({ ts }) => ts),
+		messages: upsert(
+			store.state.messages,
+			message,
+			({ _id }) => _id === message._id,
+			({ ts }) => ts,
+		),
 	});
 
 	await processMessage(message);
@@ -226,13 +244,13 @@ Livechat.onMessage(async (message) => {
 
 	await processUnread();
 	await doPlaySound(message);
-});
+};
 
 export const getGreetingMessages = (messages) => messages && messages.filter((msg) => msg.trigger);
 export const getLatestCallMessage = (messages) => messages && messages.filter((msg) => isVideoCallMessage(msg)).pop();
 
 export const loadMessages = async () => {
-	const { ongoingCall, messages: storedMessages, room } = store.state;
+	const { ongoingCall, messages: storedMessages, room, renderedTriggers } = store.state;
 
 	if (!room?._id) {
 		return;
@@ -240,18 +258,19 @@ export const loadMessages = async () => {
 
 	const { _id: rid, callStatus } = room;
 	const previousMessages = getGreetingMessages(storedMessages);
-
 	await store.setState({ loading: true });
-	const rawMessages = (await Livechat.loadMessages(rid)).concat(previousMessages);
+
+	const rawMessages = (await Livechat.loadMessages(rid)) ?? [];
+
+	if (rawMessages?.length < 20) {
+		const triggers = previousMessages.length === 0 ? renderedTriggers : previousMessages;
+		rawMessages.push(...triggers.reverse());
+	}
+
 	const messages = (await normalizeMessages(rawMessages)).map(transformAgentInformationOnMessage);
 
 	await initRoom();
 	await store.setState({ messages: (messages || []).reverse(), noMoreMessages: false, loading: false });
-
-	if (messages && messages.length) {
-		const lastMessage = messages[messages.length - 1];
-		await store.setState({ lastReadMessageId: lastMessage && lastMessage._id });
-	}
 
 	if (ongoingCall && isCallOngoing(ongoingCall.callStatus)) {
 		return;
@@ -297,7 +316,8 @@ export const loadMessages = async () => {
 };
 
 export const loadMoreMessages = async () => {
-	const { room: { _id: rid } = {}, messages = [], noMoreMessages = false } = store.state;
+	const { room, messages = [], noMoreMessages = false, renderedTriggers } = store.state;
+	const { _id: rid } = room || {};
 
 	if (!rid || noMoreMessages) {
 		return;
@@ -308,9 +328,13 @@ export const loadMoreMessages = async () => {
 	const rawMessages = await Livechat.loadMessages(rid, { limit: messages.length + 10 });
 	const moreMessages = (await normalizeMessages(rawMessages)).map(transformAgentInformationOnMessage);
 
+	const newNoMoreMessages = messages.length + 10 > moreMessages.length;
+	const triggers = newNoMoreMessages ? [...renderedTriggers] : [];
+	const newMessages = ([...moreMessages, ...triggers] || []).reverse();
+
 	await store.setState({
-		messages: (moreMessages || []).reverse(),
-		noMoreMessages: messages.length + 10 > moreMessages.length,
+		messages: newMessages,
+		noMoreMessages: newNoMoreMessages,
 		loading: false,
 	});
 };
@@ -329,7 +353,7 @@ export const defaultRoomParams = () => {
 store.on('change', ([state, prevState]) => {
 	// Cross-tab communication
 	// Detects when a room is created and then route to the correct container
-	if (!prevState.room && state.room) {
+	if (prevState.room?._id !== state.room?._id) {
 		route('/');
 	}
 });

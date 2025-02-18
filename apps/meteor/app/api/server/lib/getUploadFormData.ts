@@ -1,19 +1,31 @@
 import type { Readable } from 'stream';
 
-import { Meteor } from 'meteor/meteor';
-import type { Request } from 'express';
-import busboy from 'busboy';
+import { MeteorError } from '@rocket.chat/core-services';
 import type { ValidateFunction } from 'ajv';
+import busboy from 'busboy';
+import type { Request } from 'express';
 
-type UploadResult = {
-	file: Readable;
+import { getMimeType } from '../../../utils/lib/mimeTypes';
+
+type UploadResult<K> = {
+	file: Readable & { truncated: boolean };
+	fieldname: string;
 	filename: string;
 	encoding: string;
 	mimetype: string;
 	fileBuffer: Buffer;
+	fields: K;
 };
 
-export const getUploadFormData = async <
+type UploadResultWithOptionalFile<K> =
+	| UploadResult<K>
+	| ({
+			[P in keyof Omit<UploadResult<K>, 'fields'>]: undefined;
+	  } & {
+			fields: K;
+	  });
+
+export async function getUploadFormData<
 	T extends string,
 	K extends Record<string, string> = Record<string, string>,
 	V extends ValidateFunction<K> = ValidateFunction<K>,
@@ -22,63 +34,143 @@ export const getUploadFormData = async <
 	options: {
 		field?: T;
 		validate?: V;
+		sizeLimit?: number;
+		fileOptional: true;
+	},
+): Promise<UploadResultWithOptionalFile<K>>;
+
+export async function getUploadFormData<
+	T extends string,
+	K extends Record<string, string> = Record<string, string>,
+	V extends ValidateFunction<K> = ValidateFunction<K>,
+>(
+	{ request }: { request: Request },
+	options?: {
+		field?: T;
+		validate?: V;
+		sizeLimit?: number;
+		fileOptional?: false | undefined;
+	},
+): Promise<UploadResult<K>>;
+
+export async function getUploadFormData<
+	T extends string,
+	K extends Record<string, string> = Record<string, string>,
+	V extends ValidateFunction<K> = ValidateFunction<K>,
+>(
+	{ request }: { request: Request },
+	options: {
+		field?: T;
+		validate?: V;
+		sizeLimit?: number;
+		fileOptional?: boolean;
 	} = {},
-): Promise<[UploadResult, K, T]> =>
-	new Promise((resolve, reject) => {
-		const bb = busboy({ headers: request.headers, defParamCharset: 'utf8' });
-		const fields = Object.create(null) as K;
+): Promise<UploadResultWithOptionalFile<K>> {
+	const limits = {
+		files: 1,
+		...(options.sizeLimit && options.sizeLimit > -1 && { fileSize: options.sizeLimit }),
+	};
 
-		let uploadedFile: UploadResult | undefined;
+	const bb = busboy({ headers: request.headers, defParamCharset: 'utf8', limits });
+	const fields = Object.create(null) as K;
 
-		let assetName: T | undefined;
+	let uploadedFile: UploadResultWithOptionalFile<K> | undefined = {
+		fields,
+		encoding: undefined,
+		filename: undefined,
+		fieldname: undefined,
+		mimetype: undefined,
+		fileBuffer: undefined,
+		file: undefined,
+	};
 
-		bb.on(
-			'file',
-			(
-				fieldname: string,
-				file: Readable,
-				{ filename, encoding, mimeType: mimetype }: { filename: string; encoding: string; mimeType: string },
-			) => {
-				const fileData: Uint8Array[] = [];
+	let returnResult = (_value: UploadResultWithOptionalFile<K>) => {
+		// noop
+	};
+	let returnError = (_error?: Error | string | null | undefined) => {
+		// noop
+	};
 
-				file.on('data', (data: any) => fileData.push(data));
+	function onField(fieldname: keyof K, value: K[keyof K]) {
+		fields[fieldname] = value;
+	}
 
-				file.on('end', () => {
-					if (uploadedFile) {
-						return reject('Just 1 file is allowed');
-					}
-					if (options.field && fieldname !== options.field) {
-						return reject(new Meteor.Error('invalid-field'));
-					}
-					uploadedFile = {
-						file,
-						filename,
-						encoding,
-						mimetype,
-						fileBuffer: Buffer.concat(fileData),
-					};
+	function onEnd() {
+		if (!uploadedFile) {
+			return returnError(new MeteorError('No file or fields were uploaded'));
+		}
+		if (!options.fileOptional && !uploadedFile?.file) {
+			return returnError(new MeteorError('No file uploaded'));
+		}
+		if (options.validate !== undefined && !options.validate(fields)) {
+			return returnError(new MeteorError(`Invalid fields ${options.validate.errors?.join(', ')}`));
+		}
+		return returnResult(uploadedFile);
+	}
 
-					assetName = fieldname as T;
-				});
-			},
-		);
+	function onFile(
+		fieldname: string,
+		file: Readable & { truncated: boolean },
+		{ filename, encoding, mimeType: mimetype }: { filename: string; encoding: string; mimeType: string },
+	) {
+		if (options.field && fieldname !== options.field) {
+			file.resume();
+			return returnError(new MeteorError('invalid-field'));
+		}
 
-		bb.on('field', (fieldname: keyof K, value: K[keyof K]) => {
-			fields[fieldname] = value;
+		const fileChunks: Uint8Array[] = [];
+		file.on('data', (chunk) => {
+			fileChunks.push(chunk);
 		});
 
-		bb.on('finish', () => {
-			if (!uploadedFile || !assetName) {
-				return reject('No file uploaded');
+		file.on('end', () => {
+			if (file.truncated) {
+				fileChunks.length = 0;
+				return returnError(new MeteorError('error-file-too-large'));
 			}
-			if (options.validate === undefined) {
-				return resolve([uploadedFile, fields, assetName]);
-			}
-			if (!options.validate(fields)) {
-				return reject(`Invalid fields${options.validate.errors?.join(', ')}`);
-			}
-			return resolve([uploadedFile, fields, assetName]);
-		});
 
-		request.pipe(bb);
+			uploadedFile = {
+				file,
+				filename,
+				encoding,
+				mimetype: getMimeType(mimetype, filename),
+				fieldname,
+				fields,
+				fileBuffer: Buffer.concat(fileChunks),
+			};
+		});
+	}
+
+	function cleanup() {
+		request.unpipe(bb);
+		request.on('readable', request.read.bind(request));
+		bb.removeAllListeners();
+	}
+
+	bb.on('field', onField);
+	bb.on('file', onFile);
+	bb.on('close', cleanup);
+	bb.on('end', onEnd);
+	bb.on('finish', onEnd);
+
+	bb.on('error', (err: Error) => {
+		returnError(err);
 	});
+
+	bb.on('partsLimit', () => {
+		returnError();
+	});
+	bb.on('filesLimit', () => {
+		returnError('Just 1 file is allowed');
+	});
+	bb.on('fieldsLimit', () => {
+		returnError();
+	});
+
+	request.pipe(bb);
+
+	return new Promise<UploadResultWithOptionalFile<K>>((resolve, reject) => {
+		returnResult = resolve;
+		returnError = reject;
+	});
+}

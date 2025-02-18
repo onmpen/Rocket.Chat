@@ -1,28 +1,29 @@
-import { IWebdavNode, IWebdavAccountIntegration, IRoom } from '@rocket.chat/core-typings';
-import { Modal, Box, IconButton, Select, SelectOption } from '@rocket.chat/fuselage';
-import { useMutableCallback, useDebouncedValue } from '@rocket.chat/fuselage-hooks';
+import type { IWebdavNode, IWebdavAccountIntegration } from '@rocket.chat/core-typings';
+import type { SelectOption } from '@rocket.chat/fuselage';
+import { Modal, Box, IconButton, Select } from '@rocket.chat/fuselage';
+import { useEffectEvent, useDebouncedValue } from '@rocket.chat/fuselage-hooks';
 import { useMethod, useToastMessageDispatch, useTranslation, useSetModal } from '@rocket.chat/ui-contexts';
-import React, { useState, ReactElement, useEffect, useCallback, MouseEvent } from 'react';
+import type { ReactElement, MouseEvent } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
-import { uploadFileWithMessage } from '../../../../../app/ui/client/lib/fileUpload';
-import { fileUploadIsValidContentType } from '../../../../../app/utils/client';
-import FilterByText from '../../../../components/FilterByText';
-import { useSort } from '../../../../components/GenericTable/hooks/useSort';
-import FileUploadModal from '../../modals/FileUploadModal';
 import FilePickerBreadcrumbs from './FilePickerBreadcrumbs';
 import WebdavFilePickerGrid from './WebdavFilePickerGrid';
 import WebdavFilePickerTable from './WebdavFilePickerTable';
 import { sortWebdavNodes } from './lib/sortWebdavNodes';
+import { fileUploadIsValidContentType } from '../../../../../app/utils/client';
+import FilterByText from '../../../../components/FilterByText';
+import { useSort } from '../../../../components/GenericTable/hooks/useSort';
+import FileUploadModal from '../../modals/FileUploadModal';
 
 export type WebdavSortOptions = 'name' | 'size' | 'dataModified';
 
 type WebdavFilePickerModalProps = {
-	rid: IRoom['_id'];
+	onUpload: (file: File, description?: string) => Promise<void>;
 	onClose: () => void;
 	account: IWebdavAccountIntegration;
 };
 
-const WebdavFilePickerModal = ({ rid, onClose, account }: WebdavFilePickerModalProps): ReactElement => {
+const WebdavFilePickerModal = ({ onUpload, onClose, account }: WebdavFilePickerModalProps): ReactElement => {
 	const t = useTranslation();
 	const setModal = useSetModal();
 	const getWebdavFilePreview = useMethod('getWebdavFilePreview');
@@ -35,10 +36,10 @@ const WebdavFilePickerModal = ({ rid, onClose, account }: WebdavFilePickerModalP
 	const [parentFolders, setParentFolders] = useState<string[]>([]);
 	const [webdavNodes, setWebdavNodes] = useState<IWebdavNode[]>([]);
 	const [filterText, setFilterText] = useState('');
-	const debouncedFilter = useDebouncedValue(filterText, 500);
+	const debouncedFilter = useDebouncedValue('', 500);
 	const [isLoading, setIsLoading] = useState(false);
 
-	const showFilePreviews = useMutableCallback(async (accountId, nodes) => {
+	const showFilePreviews = useEffectEvent(async (accountId: string, nodes: (IWebdavNode & { preview?: string })[] | undefined) => {
 		if (!Array.isArray(nodes) || !nodes.length) {
 			return;
 		}
@@ -49,7 +50,11 @@ const WebdavFilePickerModal = ({ rid, onClose, account }: WebdavFilePickerModalP
 				}
 				return getWebdavFilePreview(accountId, node.filename)
 					.then((res) => {
-						const blob = new Blob([res.data], { type: 'image/png' });
+						if (!res?.data) {
+							return;
+						}
+
+						const blob = new Blob([res?.data], { type: 'image/png' });
 						const imgURL = URL.createObjectURL(blob);
 						nodes[index].preview = imgURL;
 					})
@@ -128,10 +133,7 @@ const WebdavFilePickerModal = ({ rid, onClose, account }: WebdavFilePickerModalP
 
 		const uploadFile = async (file: File, description?: string): Promise<void> => {
 			try {
-				await uploadFileWithMessage(rid, {
-					description,
-					file,
-				});
+				await onUpload?.(file, description);
 			} catch (error) {
 				return dispatchToastMessage({ type: 'error', message: error });
 			} finally {
@@ -194,7 +196,7 @@ const WebdavFilePickerModal = ({ rid, onClose, account }: WebdavFilePickerModalP
 					</Box>
 				</Box>
 				<Box display='flex' flexDirection='column'>
-					<FilterByText onChange={({ text }): void => setFilterText(text)}>
+					<FilterByText value={filterText} onChange={(event) => setFilterText(event.target.value)}>
 						{typeView === 'grid' && (
 							<Select value={sortBy} onChange={(value): void => handleSort(value as WebdavSortOptions)} options={options} />
 						)}

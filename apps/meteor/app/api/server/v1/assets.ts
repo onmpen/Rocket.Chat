@@ -1,33 +1,55 @@
-import { Meteor } from 'meteor/meteor';
+import { Settings } from '@rocket.chat/models';
 import { isAssetsUnsetAssetProps } from '@rocket.chat/rest-typings';
 
-import { RocketChatAssets } from '../../../assets/server';
+import { updateAuditedByUser } from '../../../../server/settings/lib/auditedSettingUpdates';
+import { RocketChatAssets, refreshClients } from '../../../assets/server';
+import { notifyOnSettingChangedById } from '../../../lib/server/lib/notifyListener';
+import { settings } from '../../../settings/server';
 import { API } from '../api';
 import { getUploadFormData } from '../lib/getUploadFormData';
 
 API.v1.addRoute(
 	'assets.setAsset',
-	{ authRequired: true },
+	{
+		authRequired: true,
+		permissionsRequired: ['manage-assets'],
+	},
 	{
 		async post() {
-			const [asset, { refreshAllClients, assetName: customName }, fileName] = await getUploadFormData(
+			const asset = await getUploadFormData(
 				{
 					request: this.request,
 				},
-				{ field: 'asset' },
+				{ field: 'asset', sizeLimit: settings.get('FileUpload_MaxFileSize') },
 			);
 
-			const assetName = customName || fileName;
+			const { fileBuffer, fields, filename, mimetype } = asset;
+
+			const { refreshAllClients, assetName: customName } = fields;
+
+			const assetName = customName || filename;
 			const assetsKeys = Object.keys(RocketChatAssets.assets);
 
 			const isValidAsset = assetsKeys.includes(assetName);
 			if (!isValidAsset) {
-				throw new Meteor.Error('error-invalid-asset', 'Invalid asset');
+				throw new Error('Invalid asset');
 			}
 
-			Meteor.call('setAsset', asset.fileBuffer, asset.mimetype, assetName);
+			const { key, value } = await RocketChatAssets.setAssetWithBuffer(fileBuffer, mimetype, assetName);
+
+			const { modifiedCount } = await updateAuditedByUser({
+				_id: this.userId,
+				username: this.user.username!,
+				ip: this.requestIp,
+				useragent: this.request.headers['user-agent'] || '',
+			})(Settings.updateValueById, key, value);
+
+			if (modifiedCount) {
+				void notifyOnSettingChangedById(key);
+			}
+
 			if (refreshAllClients) {
-				Meteor.call('refreshClients');
+				await refreshClients(this.userId);
 			}
 
 			return API.v1.success();
@@ -40,17 +62,31 @@ API.v1.addRoute(
 	{
 		authRequired: true,
 		validateParams: isAssetsUnsetAssetProps,
+		permissionsRequired: ['manage-assets'],
 	},
 	{
-		post() {
+		async post() {
 			const { assetName, refreshAllClients } = this.bodyParams;
 			const isValidAsset = Object.keys(RocketChatAssets.assets).includes(assetName);
 			if (!isValidAsset) {
-				throw new Meteor.Error('error-invalid-asset', 'Invalid asset');
+				throw Error('Invalid asset');
 			}
-			Meteor.call('unsetAsset', assetName);
+
+			const { key, value } = await RocketChatAssets.unsetAsset(assetName);
+
+			const { modifiedCount } = await updateAuditedByUser({
+				_id: this.userId,
+				username: this.user.username!,
+				ip: this.requestIp,
+				useragent: this.request.headers['user-agent'] || '',
+			})(Settings.updateValueById, key, value);
+
+			if (modifiedCount) {
+				void notifyOnSettingChangedById(key);
+			}
+
 			if (refreshAllClients) {
-				Meteor.call('refreshClients');
+				await refreshClients(this.userId);
 			}
 			return API.v1.success();
 		},

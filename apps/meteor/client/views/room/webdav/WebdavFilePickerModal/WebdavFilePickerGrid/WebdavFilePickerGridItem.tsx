@@ -1,5 +1,5 @@
 import { Box } from '@rocket.chat/fuselage';
-import React, { ReactElement } from 'react';
+import type { ReactElement } from 'react';
 
 const WebdavFilePickerGridItem = ({ ...props }): ReactElement => (
 	<Box

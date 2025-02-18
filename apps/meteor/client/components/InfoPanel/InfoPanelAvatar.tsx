@@ -1,8 +1,12 @@
-import React, { FC } from 'react';
+import type { ReactNode } from 'react';
 
 import Section from './InfoPanelSection';
 
-const InfoPanelAvatar: FC = ({ children }) => (
+type InfoPanelAvatarProps = {
+	children?: ReactNode;
+};
+
+const InfoPanelAvatar = ({ children }: InfoPanelAvatarProps) => (
 	<Section display='flex' justifyContent='center'>
 		{children}
 	</Section>

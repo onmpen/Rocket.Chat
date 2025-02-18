@@ -1,3 +1,4 @@
 export * from './create-target-channel';
-export * from './create-aux-context';
-export * from './apps';
+export * from './setSettingValueById';
+export * from './getSettingValueById';
+export * from './setUserPreferences';

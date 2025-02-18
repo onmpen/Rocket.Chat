@@ -1,4 +1,4 @@
-import mem from 'mem';
+import type { EventSignatures } from '@rocket.chat/core-services';
 import type {
 	ISubscription,
 	IUser,
@@ -13,18 +13,17 @@ import type {
 	IIntegration,
 	IEmailInbox,
 	IPbxEvent,
-	SettingValue,
 	ILivechatInquiryRecord,
 	IRole,
-	IUserSession,
+	ILivechatPriority,
 } from '@rocket.chat/core-typings';
 import {
+	dbWatchersDisabled,
 	Subscriptions,
 	Messages,
 	Users,
 	Settings,
 	Roles,
-	UsersSessions,
 	LivechatInquiry,
 	LivechatDepartmentAgents,
 	Rooms,
@@ -35,12 +34,12 @@ import {
 	EmailInbox,
 	PbxEvents,
 	Permissions,
+	LivechatPriority,
 } from '@rocket.chat/models';
+import type { DatabaseWatcher } from '@rocket.chat/models';
 
-import { subscriptionFields, roomFields } from './publishFields';
-import type { EventSignatures } from '../../sdk/lib/Events';
-import { isPresenceMonitorEnabled } from '../../lib/isPresenceMonitorEnabled';
-import type { DatabaseWatcher } from '../../database/DatabaseWatcher';
+import { getMessageToBroadcast } from '../../../app/lib/server/lib/notifyListener';
+import { subscriptionFields, roomFields } from '../../../lib/publishFields';
 
 type BroadcastCallback = <T extends keyof EventSignatures>(event: T, ...args: Parameters<EventSignatures[T]>) => Promise<void>;
 
@@ -66,51 +65,21 @@ export function isWatcherRunning(): boolean {
 }
 
 export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallback): void {
-	const getSettingCached = mem(async (setting: string): Promise<SettingValue> => Settings.getValueById(setting), { maxAge: 10000 });
-
-	const getUserNameCached = mem(
-		async (userId: string): Promise<string | undefined> => {
-			const user = await Users.findOne<Pick<IUser, 'name'>>(userId, { projection: { name: 1 } });
-			return user?.name;
-		},
-		{ maxAge: 10000 },
-	);
-
-	watcher.on<IMessage>(Messages.getCollectionName(), async ({ clientAction, id, data }) => {
-		switch (clientAction) {
-			case 'inserted':
-			case 'updated':
-				const message = data ?? (await Messages.findOneById(id));
-				if (!message) {
-					return;
-				}
-
-				if (message._hidden !== true && message.imported == null) {
-					const UseRealName = (await getSettingCached('UI_Use_Real_Name')) === true;
-
-					if (UseRealName) {
-						if (message.u?._id) {
-							const name = await getUserNameCached(message.u._id);
-							if (name) {
-								message.u.name = name;
-							}
-						}
-
-						if (message.mentions?.length) {
-							for await (const mention of message.mentions) {
-								const name = await getUserNameCached(mention._id);
-								if (name) {
-									mention.name = name;
-								}
-							}
-						}
+	// watch for changes on the database and broadcast them to the other instances
+	if (!dbWatchersDisabled) {
+		watcher.on<IMessage>(Messages.getCollectionName(), async ({ clientAction, id, data }) => {
+			switch (clientAction) {
+				case 'inserted':
+				case 'updated':
+					const message = await getMessageToBroadcast({ id, data });
+					if (!message) {
+						return;
 					}
-
-					broadcast('watch.messages', { clientAction, message });
-				}
-				break;
-		}
-	});
+					void broadcast('watch.messages', { message });
+					break;
+			}
+		});
+	}
 
 	watcher.on<ISubscription>(Subscriptions.getCollectionName(), async ({ clientAction, id, data, diff }) => {
 		switch (clientAction) {
@@ -121,22 +90,76 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 				}
 
 				// Override data cuz we do not publish all fields
-				const subscription = await Subscriptions.findOneById<Pick<ISubscription, keyof typeof subscriptionFields>>(id, {
-					projection: subscriptionFields,
-				});
+				const subscription =
+					data ||
+					(await Subscriptions.findOneById<
+						Pick<
+							ISubscription,
+							| 't'
+							| 'ts'
+							| 'ls'
+							| 'lr'
+							| 'name'
+							| 'fname'
+							| 'rid'
+							| 'code'
+							| 'f'
+							| 'u'
+							| 'open'
+							| 'alert'
+							| 'roles'
+							| 'unread'
+							| 'prid'
+							| 'userMentions'
+							| 'groupMentions'
+							| 'archived'
+							| 'audioNotificationValue'
+							| 'desktopNotifications'
+							| 'mobilePushNotifications'
+							| 'emailNotifications'
+							| 'desktopPrefOrigin'
+							| 'mobilePrefOrigin'
+							| 'emailPrefOrigin'
+							| 'unreadAlert'
+							| '_updatedAt'
+							| 'blocked'
+							| 'blocker'
+							| 'autoTranslate'
+							| 'autoTranslateLanguage'
+							| 'disableNotifications'
+							| 'hideUnreadStatus'
+							| 'hideMentionStatus'
+							| 'muteGroupMentions'
+							| 'ignored'
+							| 'E2EKey'
+							| 'E2ESuggestedKey'
+							| 'oldRoomKeys'
+							| 'tunread'
+							| 'tunreadGroup'
+							| 'tunreadUser'
+
+							// Omnichannel fields
+							| 'department'
+							| 'v'
+							| 'onHold'
+						>
+					>(id, {
+						projection: subscriptionFields,
+					}));
+
 				if (!subscription) {
 					return;
 				}
-				broadcast('watch.subscriptions', { clientAction, subscription });
+				void broadcast('watch.subscriptions', { clientAction, subscription });
 				break;
 			}
 
 			case 'removed': {
-				const trash = await Subscriptions.trashFindOneById<Pick<ISubscription, 'u' | 'rid'>>(id, {
-					projection: { u: 1, rid: 1 },
-				});
+				const trash = (await Subscriptions.trashFindOneById(id, {
+					projection: { u: 1, rid: 1, t: 1 },
+				})) as Pick<ISubscription, 'u' | 'rid' | '_id'> | undefined;
 				const subscription = trash || { _id: id };
-				broadcast('watch.subscriptions', { clientAction, subscription });
+				void broadcast('watch.subscriptions', { clientAction, subscription });
 				break;
 			}
 		}
@@ -148,36 +171,28 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		const role = clientAction === 'removed' ? { _id: id, name: id } : data || (await Roles.findOneById(id));
+		if (clientAction === 'removed') {
+			void broadcast('watch.roles', {
+				clientAction: 'removed',
+				role: {
+					_id: id,
+					name: id,
+				},
+			});
+			return;
+		}
+
+		const role = data || (await Roles.findOneById(id));
 
 		if (!role) {
 			return;
 		}
 
-		broadcast('watch.roles', {
-			clientAction: clientAction !== 'removed' ? ('changed' as const) : clientAction,
+		void broadcast('watch.roles', {
+			clientAction: 'changed',
 			role,
 		});
 	});
-
-	if (isPresenceMonitorEnabled()) {
-		watcher.on<IUserSession>(UsersSessions.getCollectionName(), async ({ clientAction, id, data: eventData }) => {
-			switch (clientAction) {
-				case 'inserted':
-				case 'updated':
-					const data = eventData ?? (await UsersSessions.findOneById(id));
-					if (!data) {
-						return;
-					}
-
-					broadcast('watch.userSessions', { clientAction, userSession: data });
-					break;
-				case 'removed':
-					broadcast('watch.userSessions', { clientAction, userSession: { _id: id } });
-					break;
-			}
-		});
-	}
 
 	watcher.on<ILivechatInquiryRecord>(LivechatInquiry.getCollectionName(), async ({ clientAction, id, data, diff }) => {
 		switch (clientAction) {
@@ -195,7 +210,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.inquiries', { clientAction, inquiry: data, diff });
+		void broadcast('watch.inquiries', { clientAction, inquiry: data, diff });
 	});
 
 	watcher.on<ILivechatDepartmentAgents>(LivechatDepartmentAgents.getCollectionName(), async ({ clientAction, id, diff }) => {
@@ -206,7 +221,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			if (!data) {
 				return;
 			}
-			broadcast('watch.livechatDepartmentAgents', { clientAction, id, data, diff });
+			void broadcast('watch.livechatDepartmentAgents', { clientAction, id, data, diff });
 			return;
 		}
 
@@ -216,7 +231,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 		if (!data) {
 			return;
 		}
-		broadcast('watch.livechatDepartmentAgents', { clientAction, id, data, diff });
+		void broadcast('watch.livechatDepartmentAgents', { clientAction, id, data, diff });
 	});
 
 	watcher.on<IPermission>(Permissions.getCollectionName(), async ({ clientAction, id, data: eventData, diff }) => {
@@ -240,7 +255,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('permission.changed', { clientAction, data });
+		void broadcast('permission.changed', { clientAction, data });
 
 		if (data.level === 'settings' && data.settingId) {
 			// if the permission changes, the effect on the visible settings depends on the role affected.
@@ -250,7 +265,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			if (!setting) {
 				return;
 			}
-			broadcast('watch.settings', { clientAction: 'updated', setting });
+			void broadcast('watch.settings', { clientAction: 'updated', setting });
 		}
 	});
 
@@ -278,12 +293,12 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.settings', { clientAction, setting });
+		void broadcast('watch.settings', { clientAction, setting });
 	});
 
 	watcher.on<IRoom>(Rooms.getCollectionName(), async ({ clientAction, id, data, diff }) => {
 		if (clientAction === 'removed') {
-			broadcast('watch.rooms', { clientAction, room: { _id: id } });
+			void broadcast('watch.rooms', { clientAction, room: { _id: id } });
 			return;
 		}
 
@@ -296,7 +311,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.rooms', { clientAction, room });
+		void broadcast('watch.rooms', { clientAction, room });
 	});
 
 	// TODO: Prevent flood from database on username change, what causes changes on all past messages from that user
@@ -308,20 +323,40 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.users', { clientAction, data, diff, unset, id });
+		if (clientAction === 'removed') {
+			void broadcast('watch.users', { clientAction, id });
+			return;
+		}
+		if (clientAction === 'inserted') {
+			void broadcast('watch.users', { clientAction, id, data: data! });
+			return;
+		}
+
+		void broadcast('watch.users', { clientAction, diff: diff!, unset: unset!, id });
 	});
 
 	watcher.on<ILoginServiceConfiguration>(LoginServiceConfiguration.getCollectionName(), async ({ clientAction, id }) => {
+		if (clientAction === 'removed') {
+			void broadcast('watch.loginServiceConfiguration', { clientAction, id });
+			return;
+		}
+
 		const data = await LoginServiceConfiguration.findOne<Omit<ILoginServiceConfiguration, 'secret'>>(id, { projection: { secret: 0 } });
+
 		if (!data) {
 			return;
 		}
 
-		broadcast('watch.loginServiceConfiguration', { clientAction, data, id });
+		void broadcast('watch.loginServiceConfiguration', { clientAction, data, id });
 	});
 
 	watcher.on<IInstanceStatus>(InstanceStatus.getCollectionName(), ({ clientAction, id, data, diff }) => {
-		broadcast('watch.instanceStatus', { clientAction, data, diff, id });
+		if (clientAction === 'removed') {
+			void broadcast('watch.instanceStatus', { clientAction, id, data: { _id: id } });
+			return;
+		}
+
+		void broadcast('watch.instanceStatus', { clientAction, data, diff, id });
 	});
 
 	watcher.on<IIntegrationHistory>(IntegrationHistory.getCollectionName(), async ({ clientAction, id, data, diff }) => {
@@ -330,17 +365,17 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 				const history = await IntegrationHistory.findOneById<Pick<IIntegrationHistory, 'integration'>>(id, {
 					projection: { 'integration._id': 1 },
 				});
-				if (!history || !history.integration) {
+				if (!history?.integration) {
 					return;
 				}
-				broadcast('watch.integrationHistory', { clientAction, data: history, diff, id });
+				void broadcast('watch.integrationHistory', { clientAction, data: history, diff, id });
 				break;
 			}
 			case 'inserted': {
 				if (!data) {
 					return;
 				}
-				broadcast('watch.integrationHistory', { clientAction, data, diff, id });
+				void broadcast('watch.integrationHistory', { clientAction, data, diff, id });
 				break;
 			}
 		}
@@ -348,7 +383,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 
 	watcher.on<IIntegration>(Integrations.getCollectionName(), async ({ clientAction, id, data: eventData }) => {
 		if (clientAction === 'removed') {
-			broadcast('watch.integrations', { clientAction, id, data: { _id: id } });
+			void broadcast('watch.integrations', { clientAction, id, data: { _id: id } });
 			return;
 		}
 
@@ -357,12 +392,12 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.integrations', { clientAction, data, id });
+		void broadcast('watch.integrations', { clientAction, data, id });
 	});
 
 	watcher.on<IEmailInbox>(EmailInbox.getCollectionName(), async ({ clientAction, id, data: eventData }) => {
 		if (clientAction === 'removed') {
-			broadcast('watch.emailInbox', { clientAction, id, data: { _id: id } });
+			void broadcast('watch.emailInbox', { clientAction, id, data: { _id: id } });
 			return;
 		}
 
@@ -371,7 +406,7 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 			return;
 		}
 
-		broadcast('watch.emailInbox', { clientAction, data, id });
+		void broadcast('watch.emailInbox', { clientAction, data, id });
 	});
 
 	watcher.on<IPbxEvent>(PbxEvents.getCollectionName(), async ({ clientAction, id, data: eventData }) => {
@@ -384,8 +419,19 @@ export function initWatchers(watcher: DatabaseWatcher, broadcast: BroadcastCallb
 				return;
 			}
 
-			broadcast('watch.pbxevents', { clientAction, data, id });
+			void broadcast('watch.pbxevents', { clientAction, data, id });
 		}
+	});
+
+	watcher.on<ILivechatPriority>(LivechatPriority.getCollectionName(), async ({ clientAction, id, diff }) => {
+		if (clientAction !== 'updated' || !diff || !('name' in diff)) {
+			// For now, we don't support this actions from happening
+			return;
+		}
+
+		// This solves the problem of broadcasting, since now, watcher is the one in charge of doing it.
+		// What i don't like is the idea of giving more responsibilities to watcher, even when this works
+		void broadcast('watch.priorities', { clientAction, id, diff });
 	});
 
 	watcherStarted = true;

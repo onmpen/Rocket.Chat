@@ -1,7 +1,6 @@
 {
-	"extends": ["@rocket.chat/eslint-config"],
-	"plugins": ["react", "react-hooks"],
-	"parser": "@babel/eslint-parser",
+	"extends": ["@rocket.chat/eslint-config", "prettier"],
+	"plugins": ["react", "react-hooks", "prettier"],
 	"env": {
 		"jest": true
 	},
@@ -45,7 +44,8 @@
 		"react/self-closing-comp": "error",
 		"react-hooks/rules-of-hooks": "error",
     	"react-hooks/exhaustive-deps": "warn",
-		"no-sequences": "off"
+		"no-sequences": "off",
+		"no-extra-parens": "off"
 	},
 	"settings": {
 		"import/resolver": {
@@ -62,5 +62,32 @@
 				"pragmaFrag": "Fragment",
 				"version": "detect"
 		}
-	}
+	},
+	"overrides": [
+		{
+			"files": ["*.ts", "*.tsx"],
+			"rules": {
+				"@typescript-eslint/naming-convention": [
+					"error",
+					{ "selector": "variableLike", "format": ["camelCase"], "leadingUnderscore": "allow" },
+					{
+						"selector": ["variable"],
+						"format": ["camelCase", "UPPER_CASE", "PascalCase"],
+						"leadingUnderscore": "allowSingleOrDouble"
+					},
+					{
+						"selector": ["function"],
+						"format": ["camelCase", "PascalCase"],
+						"leadingUnderscore": "allowSingleOrDouble"
+					},
+					{
+						"selector": "parameter",
+						"format": ["camelCase"],
+						"modifiers": ["unused"],
+						"leadingUnderscore": "require"
+					}
+				]
+			}
+		}
+	]
 }

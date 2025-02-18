@@ -1,8 +1,7 @@
-import { useEndpoint } from '@rocket.chat/ui-contexts';
-import { useQuery } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
 
-export const useIsEnterprise = (): boolean => {
-	const isEnterpriseEdition = useEndpoint('GET', '/v1/licenses.isEnterprise');
-	const { data } = useQuery(['licenses.isEnterprise'], () => isEnterpriseEdition(), { keepPreviousData: true });
-	return Boolean(data?.isEnterprise);
+import { useLicenseBase } from './useLicense';
+
+export const useIsEnterprise = (): UseQueryResult<{ isEnterprise: boolean }> => {
+	return useLicenseBase({ select: (data) => ({ isEnterprise: Boolean(data?.license.license) }) });
 };

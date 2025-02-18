@@ -1,15 +1,17 @@
 import { useCustomSound } from '@rocket.chat/ui-contexts';
-import { VideoConfPopupBackdrop } from '@rocket.chat/ui-video-conf';
-import React, { ReactElement, useEffect, useMemo } from 'react';
-
+import type { VideoConfPopupPayload } from '@rocket.chat/ui-video-conf';
 import {
-	VideoConfPopupPayload,
+	VideoConfPopupBackdrop,
 	useVideoConfIsCalling,
 	useVideoConfIsRinging,
 	useVideoConfIncomingCalls,
-} from '../../../../../contexts/VideoConfContext';
-import VideoConfPopupPortal from '../../../../../portals/VideoConfPopupPortal';
+} from '@rocket.chat/ui-video-conf';
+import type { ReactElement } from 'react';
+import { useEffect, useMemo } from 'react';
+import { FocusScope } from 'react-aria';
+
 import VideoConfPopup from './VideoConfPopup';
+import VideoConfPopupPortal from '../../../../../portals/VideoConfPopupPortal';
 
 const VideoConfPopups = ({ children }: { children?: VideoConfPopupPayload }): ReactElement => {
 	const customSound = useCustomSound();
@@ -35,8 +37,8 @@ const VideoConfPopups = ({ children }: { children?: VideoConfPopupPayload }): Re
 		}
 
 		return (): void => {
-			customSound.pause('ringtone');
-			customSound.pause('dialtone');
+			customSound.stop('ringtone');
+			customSound.stop('dialtone');
 		};
 	}, [customSound, isRinging, isCalling]);
 
@@ -44,11 +46,13 @@ const VideoConfPopups = ({ children }: { children?: VideoConfPopupPayload }): Re
 		<>
 			{(children || popups?.length > 0) && (
 				<VideoConfPopupPortal>
-					<VideoConfPopupBackdrop>
-						{(children ? [children, ...popups] : popups).map(({ id, rid, isReceiving }, index = 1) => (
-							<VideoConfPopup key={id} id={id} rid={rid} isReceiving={isReceiving} isCalling={isCalling} position={index * 10} />
-						))}
-					</VideoConfPopupBackdrop>
+					<FocusScope autoFocus contain restoreFocus>
+						<VideoConfPopupBackdrop>
+							{(children ? [children, ...popups] : popups).map(({ id, rid, isReceiving }, index = 1) => (
+								<VideoConfPopup key={id} id={id} rid={rid} isReceiving={isReceiving} isCalling={isCalling} position={index * 10} />
+							))}
+						</VideoConfPopupBackdrop>
+					</FocusScope>
 				</VideoConfPopupPortal>
 			)}
 		</>

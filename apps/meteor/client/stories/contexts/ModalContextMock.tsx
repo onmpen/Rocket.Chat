@@ -1,6 +1,7 @@
 import { ModalContext } from '@rocket.chat/ui-contexts';
 import { action } from '@storybook/addon-actions';
-import React, { ContextType, ReactElement, ReactNode, useContext, useMemo } from 'react';
+import type { ContextType, ReactElement, ReactNode } from 'react';
+import { useContext, useMemo } from 'react';
 
 const logAction = action('ModalContext');
 
@@ -22,7 +23,7 @@ const ModalContextMock = ({ children }: ModalContextMockProps): ReactElement => 
 							},
 						},
 						currentModal: context.currentModal,
-				  }
+					}
 				: undefined,
 		[context],
 	);

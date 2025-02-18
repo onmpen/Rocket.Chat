@@ -1,12 +1,15 @@
-import { Meteor } from 'meteor/meteor';
+import { Subscriptions } from '@rocket.chat/models';
 import {
 	isSubscriptionsGetProps,
 	isSubscriptionsGetOneProps,
 	isSubscriptionsReadProps,
 	isSubscriptionsUnreadProps,
 } from '@rocket.chat/rest-typings';
-import { Subscriptions } from '@rocket.chat/models';
+import { Meteor } from 'meteor/meteor';
 
+import { readMessages } from '../../../../server/lib/readMessages';
+import { getSubscriptions } from '../../../../server/publications/subscription';
+import { unreadMessages } from '../../../message-mark-as-unread/server/unreadMessages';
 import { API } from '../api';
 
 API.v1.addRoute(
@@ -27,14 +30,14 @@ API.v1.addRoute(
 				updatedSinceDate = new Date(updatedSince as string);
 			}
 
-			const result = await Meteor.call('subscriptions/get', updatedSinceDate);
+			const result = await getSubscriptions(this.userId, updatedSinceDate);
 
 			return API.v1.success(
 				Array.isArray(result)
 					? {
 							update: result,
 							remove: [],
-					  }
+						}
 					: result,
 			);
 		},
@@ -63,12 +66,13 @@ API.v1.addRoute(
 );
 
 /**
-	This API is suppose to mark any room as read.
+  This API is suppose to mark any room as read.
 
 	Method: POST
 	Route: api/v1/subscriptions.read
 	Params:
 		- rid: The rid of the room to be marked as read.
+		- roomId: Alternative for rid.
  */
 API.v1.addRoute(
 	'subscriptions.read',
@@ -77,8 +81,11 @@ API.v1.addRoute(
 		validateParams: isSubscriptionsReadProps,
 	},
 	{
-		post() {
-			Meteor.call('readMessages', this.bodyParams.rid);
+		async post() {
+			const { readThreads = false } = this.bodyParams;
+			const roomId = 'rid' in this.bodyParams ? this.bodyParams.rid : this.bodyParams.roomId;
+
+			await readMessages(roomId, this.userId, readThreads);
 
 			return API.v1.success();
 		},
@@ -92,8 +99,8 @@ API.v1.addRoute(
 		validateParams: isSubscriptionsUnreadProps,
 	},
 	{
-		post() {
-			Meteor.call('unreadMessages', (this.bodyParams as any).firstUnreadMessage, (this.bodyParams as any).roomId);
+		async post() {
+			await unreadMessages(this.userId, (this.bodyParams as any).firstUnreadMessage, (this.bodyParams as any).roomId);
 
 			return API.v1.success();
 		},

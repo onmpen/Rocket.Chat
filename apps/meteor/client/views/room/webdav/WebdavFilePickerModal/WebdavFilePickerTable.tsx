@@ -1,8 +1,12 @@
-import { IWebdavNode } from '@rocket.chat/core-typings';
-import { Box, Icon, States, StatesIcon, StatesTitle } from '@rocket.chat/fuselage';
-import { useTranslation } from '@rocket.chat/ui-contexts';
-import React, { ReactElement, ComponentProps } from 'react';
+import type { IWebdavNode } from '@rocket.chat/core-typings';
+import { Box, Icon } from '@rocket.chat/fuselage';
+import type { ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 
+import type { WebdavSortOptions } from './WebdavFilePickerModal';
+import { getNodeFileSize } from './lib/getNodeFileSize';
+import { getNodeIconType } from './lib/getNodeIconType';
+import GenericNoResults from '../../../../components/GenericNoResults';
 import {
 	GenericTable,
 	GenericTableBody,
@@ -13,9 +17,6 @@ import {
 	GenericTableRow,
 } from '../../../../components/GenericTable';
 import { timeAgo } from '../../../../lib/utils/timeAgo';
-import type { WebdavSortOptions } from './WebdavFilePickerModal';
-import { getNodeFileSize } from './lib/getNodeFileSize';
-import { getNodeIconType } from './lib/getNodeIconType';
 
 type WebdavFilePickerTableProps = {
 	webdavNodes: IWebdavNode[];
@@ -34,7 +35,7 @@ const WebdavFilePickerTable = ({
 	onNodeClick,
 	isLoading,
 }: WebdavFilePickerTableProps): ReactElement => {
-	const t = useTranslation();
+	const { t } = useTranslation();
 
 	return (
 		<Box display='flex' flexDirection='column' overflowY='hidden' height='x256'>
@@ -76,7 +77,7 @@ const WebdavFilePickerTable = ({
 								return (
 									<GenericTableRow key={index} onClick={(): void => onNodeClick(webdavNode)} tabIndex={index} role='link' action>
 										<GenericTableCell fontScale='p2' color='default' w='x200' display='flex' alignItems='center'>
-											<Icon mie='x4' size='x20' name={icon as ComponentProps<typeof Icon>['name']} />
+											<Icon mie={4} size='x20' name={icon} />
 											<Box withTruncatedText>{webdavNode.basename}</Box>
 										</GenericTableCell>
 										<GenericTableCell fontScale='p2' color='default'>
@@ -91,12 +92,7 @@ const WebdavFilePickerTable = ({
 					</GenericTableBody>
 				</GenericTable>
 			)}
-			{!isLoading && webdavNodes?.length === 0 && (
-				<States>
-					<StatesIcon name='magnifier' />
-					<StatesTitle>{t('No_results_found')}</StatesTitle>
-				</States>
-			)}
+			{!isLoading && webdavNodes?.length === 0 && <GenericNoResults />}
 		</Box>
 	);
 };

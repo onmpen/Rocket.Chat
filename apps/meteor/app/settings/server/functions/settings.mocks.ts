@@ -9,6 +9,12 @@ type Dictionary = {
 class SettingsClass {
 	settings: ICachedSettings;
 
+	private delay = 0;
+
+	setDelay(delay: number): void {
+		this.delay = delay;
+	}
+
 	find(): any[] {
 		return [];
 	}
@@ -40,7 +46,7 @@ class SettingsClass {
 		this.insertCalls++;
 	}
 
-	updateOne(query: any, update: any): void {
+	updateOne(query: any, update: any, options?: any): void {
 		const existent = this.findOne(query);
 
 		const data = { ...existent, ...query, ...update, ...update.$set };
@@ -49,22 +55,57 @@ class SettingsClass {
 			Object.assign(data, update.$setOnInsert);
 		}
 
-		// console.log(query, data);
-		this.data.set(query._id, data);
+		if (update.$unset) {
+			Object.keys(update.$unset).forEach((key) => {
+				delete data[key];
+			});
+		}
 
-		// Can't import before the mock command on end of this file!
-		// eslint-disable-next-line @typescript-eslint/no-var-requires
-		this.settings.set(data);
+		const modifiers = ['$set', '$setOnInsert', '$unset'];
+
+		modifiers.forEach((key) => {
+			delete data[key];
+		});
+
+		if (options?.upsert === true && !modifiers.some((key) => Object.keys(update).includes(key))) {
+			throw new Error('Invalid upsert');
+		}
+
+		if (this.delay) {
+			setTimeout(() => {
+				// console.log(query, data);
+				this.data.set(query._id, data);
+
+				// Can't import before the mock command on end of this file!
+				// eslint-disable-next-line @typescript-eslint/no-var-requires
+				this.settings.set(data);
+			}, this.delay);
+		} else {
+			this.data.set(query._id, data);
+			// Can't import before the mock command on end of this file!
+			// eslint-disable-next-line @typescript-eslint/no-var-requires
+			this.settings.set(data);
+		}
 
 		this.upsertCalls++;
 	}
 
+	findOneAndUpdate({ _id }: { _id: string }, value: any, options?: any) {
+		this.updateOne({ _id }, value, options);
+		return { value: this.findOne({ _id }) };
+	}
+
 	updateValueById(id: string, value: any): void {
 		this.data.set(id, { ...this.data.get(id), value });
-
 		// Can't import before the mock command on end of this file!
 		// eslint-disable-next-line @typescript-eslint/no-var-requires
-		this.settings.set(this.data.get(id) as ISetting);
+		if (this.delay) {
+			setTimeout(() => {
+				this.settings.set(this.data.get(id) as ISetting);
+			}, this.delay);
+		} else {
+			this.settings.set(this.data.get(id) as ISetting);
+		}
 	}
 }
 

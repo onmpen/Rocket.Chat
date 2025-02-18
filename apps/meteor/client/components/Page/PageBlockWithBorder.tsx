@@ -1,21 +1,13 @@
-import { Box } from '@rocket.chat/fuselage';
-import React, { ComponentProps, forwardRef, useContext } from 'react';
+import type { Box } from '@rocket.chat/fuselage';
+import type { ComponentProps } from 'react';
+import { forwardRef, useContext } from 'react';
 
-import PageContent from './PageContent';
+import PageBlock from './PageBlock';
 import PageContext from './PageContext';
 
 const PageBlockWithBorder = forwardRef<HTMLElement, ComponentProps<typeof Box>>(function PageBlockWithBorder(props, ref) {
 	const [border] = useContext(PageContext);
-	return (
-		<PageContent
-			{...props}
-			pb='x16'
-			ref={ref}
-			borderBlockEndColor={border ? 'neutral-200' : 'transparent'}
-			borderBlockEndWidth='x2'
-			height='auto'
-		/>
-	);
+	return <PageBlock ref={ref} {...props} borderBlockEndColor={border ? 'extra-light' : 'transparent'} />;
 });
 
 export default PageBlockWithBorder;

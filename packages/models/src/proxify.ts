@@ -5,18 +5,48 @@ const models = new Map<string, IBaseModel<any>>();
 
 function handler<T extends object>(namespace: string): ProxyHandler<T> {
 	return {
-		get: (_target: T, prop: string): any => {
+		get: (_target: T, nameProp: keyof IBaseModel<any>): any => {
 			if (!models.has(namespace) && lazyModels.has(namespace)) {
-				models.set(namespace, (lazyModels.get(namespace) as () => IBaseModel<any>)());
+				const getModel = lazyModels.get(namespace);
+				if (getModel) {
+					models.set(namespace, getModel());
+				}
 			}
 
-			// @ts-ignore
-			return models.get(namespace)[prop];
+			const model = models.get(namespace);
+
+			if (!model) {
+				throw new Error(`Model ${namespace} not found`);
+			}
+
+			const prop = model[nameProp];
+
+			if (typeof prop === 'function') {
+				return prop.bind(model);
+			}
+
+			return prop;
+		},
+
+		set() {
+			if (process.env.NODE_ENV !== 'production') {
+				throw new Error('Models accessed via proxify are read-only, use the model instance directly to modify it.');
+			}
+			/* istanbul ignore next */
+			return true;
 		},
 	};
 }
 
-export function registerModel(name: string, instance: IBaseModel<any> | (() => IBaseModel<any>)): void {
+export function registerModel<TModel extends IBaseModel<any, any, any>>(
+	name: string,
+	instance: TModel | (() => TModel),
+	overwriteExisting = true,
+): void {
+	if (!overwriteExisting && (lazyModels.has(name) || models.has(name))) {
+		return;
+	}
+
 	if (typeof instance === 'function') {
 		lazyModels.set(name, instance);
 	} else {

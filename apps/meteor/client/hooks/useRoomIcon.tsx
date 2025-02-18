@@ -1,20 +1,13 @@
 import type { IRoom } from '@rocket.chat/core-typings';
 import { isRoomFederated, isDirectMessageRoom } from '@rocket.chat/core-typings';
-import { Icon } from '@rocket.chat/fuselage';
-import React, { ComponentProps, ReactElement } from 'react';
+import type { Icon } from '@rocket.chat/fuselage';
+import type { ComponentProps, ReactElement } from 'react';
 
 import { ReactiveUserStatus } from '../components/UserStatus';
 
-export const colors = {
-	busy: 'danger-500',
-	away: 'warning-600',
-	online: 'success-500',
-	offline: 'neutral-600',
-};
-
 export const useRoomIcon = (
 	room: Pick<IRoom, 't' | 'prid' | 'teamMain' | 'uids' | 'u'>,
-): ReactElement | ComponentProps<typeof Icon> | null => {
+): ComponentProps<typeof Icon> | ReactElement | null => {
 	if (isRoomFederated(room)) {
 		return { name: 'globe' };
 	}

@@ -1,10 +1,10 @@
-import { ISetting } from '@rocket.chat/core-typings';
+import type { ISetting } from '@rocket.chat/core-typings';
 import { css } from '@rocket.chat/css-in-js';
-import { Button, Box } from '@rocket.chat/fuselage';
-import { useMutableCallback } from '@rocket.chat/fuselage-hooks';
-import { Card } from '@rocket.chat/ui-client';
-import { useRoute, TranslationKey, useTranslation } from '@rocket.chat/ui-contexts';
-import React, { ReactElement } from 'react';
+import { Button, Box, Card, CardTitle, CardBody, CardControls } from '@rocket.chat/fuselage';
+import type { TranslationKey } from '@rocket.chat/ui-contexts';
+import { useRouter } from '@rocket.chat/ui-contexts';
+import { useId, type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import MarkdownText from '../../../components/MarkdownText';
 
@@ -15,35 +15,38 @@ const clampStyle = css`
 	-webkit-box-orient: vertical;
 `;
 
-type SettingsGroupCard = {
+type SettingsGroupCardProps = {
 	id: ISetting['_id'];
 	title: TranslationKey;
 	description?: TranslationKey;
 };
 
-const SettingsGroupCard = ({ id, title, description }: SettingsGroupCard): ReactElement => {
-	const t = useTranslation();
-	const router = useRoute('admin-settings');
-
-	const handleOpenGroup = useMutableCallback(() => {
-		if (id) {
-			router.push({
-				group: id,
-			});
-		}
-	});
+const SettingsGroupCard = ({ id, title, description, ...props }: SettingsGroupCardProps): ReactElement => {
+	const { t, i18n } = useTranslation();
+	const router = useRouter();
+	const cardId = useId();
+	const descriptionId = useId();
 
 	return (
-		<Card data-qa-id={id} variant='light'>
-			<Card.Title>{t(title)}</Card.Title>
-			<Card.Body height='x88'>
-				<Box className={clampStyle}>
-					{description && t.has(description) && <MarkdownText variant='inlineWithoutBreaks' content={t(description)} />}
+		<Card data-qa-id={id} aria-labelledby={cardId} aria-describedby={descriptionId} {...props} height='full' role='region'>
+			<CardTitle id={cardId}>{t(title)}</CardTitle>
+			<CardBody>
+				<Box className={clampStyle} id={descriptionId}>
+					{description && i18n.exists(description) && <MarkdownText variant='inlineWithoutBreaks' content={t(description)} />}
 				</Box>
-			</Card.Body>
-			<Card.Footer>
-				<Button onClick={handleOpenGroup}>{t('Open')}</Button>
-			</Card.Footer>
+			</CardBody>
+			<CardControls>
+				<Button
+					is='a'
+					href={router.buildRoutePath({
+						pattern: '/admin/settings/:group?',
+						params: { group: id },
+					})}
+					medium
+				>
+					{t('Open')}
+				</Button>
+			</CardControls>
 		</Card>
 	);
 };

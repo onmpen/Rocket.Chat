@@ -1,11 +1,10 @@
-import { useCallback } from 'react';
-import { useSyncExternalStore } from 'use-sync-external-store/shim';
+import { useCallback, useSyncExternalStore } from 'react';
 
-import { Presence, UserPresence } from '../lib/presence';
-
-type Presence = 'online' | 'offline' | 'busy' | 'away' | 'loading';
+import type { UserPresence } from '../lib/presence';
+import { Presence } from '../lib/presence';
 
 /**
+ * @deprecated
  * Hook to fetch and subscribe users presence
  *
  * @param uid - User Id
