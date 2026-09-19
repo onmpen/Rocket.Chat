@@ -9186,7 +9186,7 @@ __metadata:
     "@types/jest": "npm:~30.0.0"
     "@types/strict-uri-encode": "npm:^2.0.2"
     eslint: "npm:~9.39.5"
-    filter-obj: "npm:^3.0.0"
+    filter-obj: "npm:^6.1.0"
     jest: "npm:~30.2.0"
     jest-fetch-mock: "npm:~3.0.3"
     query-string: "npm:^7.1.3"
@@ -23385,10 +23385,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"filter-obj@npm:^3.0.0":
-  version: 3.0.0
-  resolution: "filter-obj@npm:3.0.0"
-  checksum: 10/8786f8dcca41db03e97b5beac6b6b963f6d232d36d335ba7d099eb0bb3ac61a7bc4c0b8763138bc9f5f9b23d3fc29bfc318f6710f3099ff30f3269004d285fe5
+"filter-obj@npm:^6.1.0":
+  version: 6.1.0
+  resolution: "filter-obj@npm:6.1.0"
+  checksum: 10/6d70508c5c2126fccae0e1d79a99eb3e3dc442b20e6ab0b8c0b0c801de73901b187f3ec8bec62c3d9fd4b1b4cfc67561469f3354a7369d2f1141217e08f0c56f
   languageName: node
   linkType: hard
 
